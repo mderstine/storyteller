@@ -11,6 +11,7 @@ import storyteller.config as config
 from storyteller.models import SourceType, Timeline
 from storyteller.output import (
     build_narrative_context,
+    render_activity_digest_md,
     render_narrative_context_md,
     render_timeline_md,
     write_output,
@@ -242,3 +243,94 @@ def publish(
         raise click.ClickException(
             "`git` not found. Ensure git is installed and on your PATH."
         )
+
+
+@cli.command()
+@click.option(
+    "--period",
+    type=click.Choice(["day", "week"]),
+    default="day",
+    help="Period to digest (default: day).",
+)
+@click.option(
+    "--date",
+    "target_date",
+    type=click.DateTime(),
+    default=None,
+    help="Target date (default: today).",
+)
+@click.option(
+    "--sources",
+    multiple=True,
+    type=click.Choice(["copilot", "github"]),
+    default=["copilot", "github"],
+    show_default=True,
+    help="Sources to include in the digest.",
+)
+@click.option(
+    "--input-file",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Input JSON file from ingest step (default: $STORYTELLER_INGESTED_FILE).",
+)
+@click.option(
+    "--output-dir",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Output directory for the digest (default: $STORYTELLER_OUTPUT_DIR).",
+)
+def digest(
+    period: str,
+    target_date: datetime | None,
+    sources: tuple[str, ...],
+    input_file: Path | None,
+    output_dir: Path | None,
+) -> None:
+    """Cache a Copilot + git activity digest to the output directory.
+
+    Reads ingested data, filters to the specified sources and period, and
+    writes a structured markdown digest to:
+
+        output/digest-{period}-{date}.md
+
+    Run daily to build a week's worth of digests, then use the
+    generate-narrative skill at week's end to crystallise the narrative.
+    """
+    if input_file is None:
+        input_file = config.INGESTED_FILE
+    if not input_file.exists():
+        raise click.UsageError(
+            f"Input file '{input_file}' not found. Run `storyteller ingest` first."
+        )
+    if output_dir is None:
+        output_dir = config.OUTPUT_DIR
+
+    if target_date is None:
+        target_date = datetime.now()
+
+    if period == "day":
+        start = target_date.replace(hour=0, minute=0, second=0, microsecond=0)
+        end = start + timedelta(days=1)
+        date_label = start.strftime("%Y-%m-%d")
+        date_range = date_label
+    else:  # week
+        weekday = target_date.weekday()
+        start = (target_date - timedelta(days=weekday)).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        end = start + timedelta(days=7)
+        date_label = start.strftime("%Y-%m-%d")
+        date_range = f"{start.strftime('%Y-%m-%d')} to {(end - timedelta(days=1)).strftime('%Y-%m-%d')}"
+
+    tl = Timeline.from_json(input_file.read_text())
+    source_types = [SourceType(s) for s in sources]
+    filtered = build_timeline(tl.events, start=start, end=end, sources=source_types)
+
+    md_content = render_activity_digest_md(filtered, period=period, date_range=date_range)
+    out_file = output_dir / f"digest-{period}-{date_label}.md"
+    write_output(md_content, out_file)
+
+    copilot_count = sum(1 for e in filtered.events if e.source_type.value == "copilot")
+    github_count = sum(1 for e in filtered.events if e.source_type.value == "github")
+    click.echo(f"Digest cached -> {out_file}")
+    click.echo(f"  {copilot_count} Copilot session(s), {github_count} git commit(s)")

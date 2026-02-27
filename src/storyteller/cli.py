@@ -7,6 +7,7 @@ from pathlib import Path
 
 import click
 
+import storyteller.config as config
 from storyteller.models import SourceType, Timeline
 from storyteller.output import (
     build_narrative_context,
@@ -15,6 +16,7 @@ from storyteller.output import (
     write_output,
     write_timeline_json,
 )
+from storyteller.publisher import publish_gist, publish_to_repo
 from storyteller.timeline import build_timeline, ingest
 
 
@@ -24,7 +26,7 @@ def cli() -> None:
 
 
 @cli.command()
-@click.argument("path", type=click.Path(exists=True, path_type=Path))
+@click.argument("path", type=click.Path(path_type=Path), required=False, default=None)
 @click.option(
     "--source-type",
     type=click.Choice(["auto", "copilot", "calendar", "msg", "github", "notes"]),
@@ -34,11 +36,24 @@ def cli() -> None:
 @click.option(
     "--output-dir",
     type=click.Path(path_type=Path),
-    default=Path("output"),
-    help="Output directory for structured JSON.",
+    default=None,
+    help="Output directory for structured JSON (default: $STORYTELLER_OUTPUT_DIR or output/).",
 )
-def ingest_cmd(path: Path, source_type: str, output_dir: Path) -> None:
-    """Parse files into structured JSON."""
+def ingest_cmd(path: Path | None, source_type: str, output_dir: Path | None) -> None:
+    """Parse files into structured JSON.
+
+    PATH defaults to $STORYTELLER_DATA_DIR when omitted.
+    """
+    if path is None:
+        path = config.DATA_DIR
+    if not path.exists():
+        raise click.UsageError(
+            f"Path '{path}' does not exist. "
+            "Pass a path argument or set STORYTELLER_DATA_DIR in .env."
+        )
+    if output_dir is None:
+        output_dir = config.OUTPUT_DIR
+
     st = None if source_type == "auto" else SourceType(source_type)
     events = ingest(path, source_type=st)
 
@@ -64,17 +79,23 @@ def ingest_cmd(path: Path, source_type: str, output_dir: Path) -> None:
 )
 @click.option(
     "--input-file",
-    type=click.Path(exists=True, path_type=Path),
-    default=Path("output/ingested.json"),
-    help="Input JSON file from ingest step.",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Input JSON file from ingest step (default: $STORYTELLER_INGESTED_FILE).",
 )
 def timeline(
     from_date: datetime | None,
     to_date: datetime | None,
     sources: tuple[str, ...],
-    input_file: Path,
+    input_file: Path | None,
 ) -> None:
     """Build and display timeline from ingested data."""
+    if input_file is None:
+        input_file = config.INGESTED_FILE
+    if not input_file.exists():
+        raise click.UsageError(
+            f"Input file '{input_file}' not found. Run `storyteller ingest` first."
+        )
     tl = Timeline.from_json(input_file.read_text())
 
     source_types = [SourceType(s) for s in sources] if sources else None
@@ -99,23 +120,31 @@ def timeline(
 )
 @click.option(
     "--input-file",
-    type=click.Path(exists=True, path_type=Path),
-    default=Path("output/ingested.json"),
-    help="Input JSON file from ingest step.",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Input JSON file from ingest step (default: $STORYTELLER_INGESTED_FILE).",
 )
 @click.option(
     "--output-dir",
     type=click.Path(path_type=Path),
-    default=Path("output"),
-    help="Output directory for narrative context.",
+    default=None,
+    help="Output directory for narrative context (default: $STORYTELLER_OUTPUT_DIR).",
 )
 def prepare(
     period: str,
     target_date: datetime | None,
-    input_file: Path,
-    output_dir: Path,
+    input_file: Path | None,
+    output_dir: Path | None,
 ) -> None:
     """Prepare narrative context markdown for Copilot."""
+    if input_file is None:
+        input_file = config.INGESTED_FILE
+    if not input_file.exists():
+        raise click.UsageError(
+            f"Input file '{input_file}' not found. Run `storyteller ingest` first."
+        )
+    if output_dir is None:
+        output_dir = config.OUTPUT_DIR
     tl = Timeline.from_json(input_file.read_text())
 
     if target_date is None:
@@ -143,3 +172,70 @@ def prepare(
     click.echo(
         f"  {len(filtered.events)} events across {len(ctx.source_summary)} sources"
     )
+
+
+@cli.command()
+@click.argument("file", type=click.Path(exists=True, path_type=Path))
+@click.option(
+    "--mode",
+    type=click.Choice(["gist", "repo"]),
+    default=None,
+    help="Publishing mode (default: $STORYTELLER_GITHUB_PUBLISH_MODE or 'gist').",
+)
+@click.option(
+    "--description",
+    default="",
+    help="Short description for the Gist or commit message.",
+)
+@click.option(
+    "--repo",
+    default=None,
+    help="Target repository 'owner/repo' (mode 'repo'; default: $STORYTELLER_GITHUB_REPO).",
+)
+@click.option(
+    "--repo-path",
+    default=None,
+    help="Directory inside the repo (mode 'repo'; default: $STORYTELLER_GITHUB_REPO_PATH).",
+)
+@click.option(
+    "--public",
+    is_flag=True,
+    default=None,
+    help="Create a public Gist (mode 'gist'; default from $STORYTELLER_GITHUB_GIST_PUBLIC).",
+)
+def publish(
+    file: Path,
+    mode: str | None,
+    description: str,
+    repo: str | None,
+    repo_path: str | None,
+    public: bool | None,
+) -> None:
+    """Publish a narrative markdown summary to GitHub.
+
+    FILE is the markdown file to publish (e.g. output/narrative-day-2025-01-15.md).
+
+    Requires `gh` CLI to be installed and authenticated (`gh auth login`).
+    """
+    resolved_mode = mode or config.GITHUB_PUBLISH_MODE
+    resolved_public = public if public is not None else config.GITHUB_GIST_PUBLIC
+
+    try:
+        if resolved_mode == "gist":
+            url = publish_gist(file, description=description, public=resolved_public)
+            click.echo(f"Published gist -> {url}")
+        else:
+            resolved_repo = repo or config.GITHUB_REPO
+            resolved_repo_path = repo_path or config.GITHUB_REPO_PATH
+            url = publish_to_repo(
+                file,
+                repo=resolved_repo,
+                repo_path=resolved_repo_path,
+                commit_message=description,
+            )
+            click.echo(f"Published to repo -> {url}")
+    except FileNotFoundError:
+        raise click.ClickException(
+            "`gh` CLI not found. Install it from https://cli.github.com/ "
+            "and run `gh auth login`."
+        )

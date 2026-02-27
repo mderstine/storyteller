@@ -334,3 +334,114 @@ def digest(
     github_count = sum(1 for e in filtered.events if e.source_type.value == "github")
     click.echo(f"Digest cached -> {out_file}")
     click.echo(f"  {copilot_count} Copilot session(s), {github_count} git commit(s)")
+
+
+@cli.command()
+@click.option(
+    "--period",
+    type=click.Choice(["day", "week"]),
+    default="week",
+    help="Period to run the full pipeline for (default: week).",
+)
+@click.option(
+    "--date",
+    "target_date",
+    type=click.DateTime(),
+    default=None,
+    help="Target date (default: today).",
+)
+@click.option(
+    "--data-dir",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Data pool to ingest from (default: $STORYTELLER_DATA_DIR).",
+)
+@click.option(
+    "--output-dir",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Output directory (default: $STORYTELLER_OUTPUT_DIR).",
+)
+def run(
+    period: str,
+    target_date: datetime | None,
+    data_dir: Path | None,
+    output_dir: Path | None,
+) -> None:
+    """Run the full automated pipeline: ingest → digest → prepare.
+
+    After this command completes, open the generated narrative context file
+    in Copilot Chat and use the generate-narrative skill to craft the final
+    narrative.  Then publish with `storyteller publish`.
+    """
+    if data_dir is None:
+        data_dir = config.DATA_DIR
+    if not data_dir.exists():
+        raise click.UsageError(
+            f"Data directory '{data_dir}' does not exist. "
+            "Set STORYTELLER_DATA_DIR in .env or pass --data-dir."
+        )
+    if output_dir is None:
+        output_dir = config.OUTPUT_DIR
+
+    if target_date is None:
+        target_date = datetime.now()
+
+    # ── Compute period bounds ────────────────────────────────────────────
+    if period == "day":
+        start = target_date.replace(hour=0, minute=0, second=0, microsecond=0)
+        end = start + timedelta(days=1)
+        date_label = start.strftime("%Y-%m-%d")
+        date_range = date_label
+    else:  # week
+        weekday = target_date.weekday()
+        start = (target_date - timedelta(days=weekday)).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        end = start + timedelta(days=7)
+        date_label = start.strftime("%Y-%m-%d")
+        date_range = (
+            f"{start.strftime('%Y-%m-%d')} to "
+            f"{(end - timedelta(days=1)).strftime('%Y-%m-%d')}"
+        )
+
+    # ── Step 1: Ingest ───────────────────────────────────────────────────
+    click.echo(f"[1/3] Ingesting data from {data_dir} ...")
+    events = ingest(data_dir)
+    if not events:
+        raise click.ClickException(f"No events found in '{data_dir}'.")
+    tl_all = Timeline(events=events)
+    tl_all.sort()
+    ingested_file = output_dir / "ingested.json"
+    write_timeline_json(tl_all, ingested_file)
+    click.echo(f"      {len(events)} events -> {ingested_file}")
+
+    # ── Step 2: Digest (Copilot + git) ───────────────────────────────────
+    click.echo(f"[2/3] Caching activity digest ({period}: {date_range}) ...")
+    digest_sources = [SourceType.COPILOT, SourceType.GITHUB]
+    tl_digest = build_timeline(tl_all.events, start=start, end=end, sources=digest_sources)
+    digest_md = render_activity_digest_md(tl_digest, period=period, date_range=date_range)
+    digest_file = output_dir / f"digest-{period}-{date_label}.md"
+    write_output(digest_md, digest_file)
+    copilot_n = sum(1 for e in tl_digest.events if e.source_type == SourceType.COPILOT)
+    github_n = sum(1 for e in tl_digest.events if e.source_type == SourceType.GITHUB)
+    click.echo(f"      {copilot_n} Copilot session(s), {github_n} git commit(s) -> {digest_file}")
+
+    # ── Step 3: Prepare narrative context ────────────────────────────────
+    click.echo(f"[3/3] Preparing narrative context ...")
+    tl_period = build_timeline(tl_all.events, start=start, end=end)
+    ctx = build_narrative_context(tl_period, period=period, date_range=date_range)
+    narrative_md = render_narrative_context_md(ctx)
+    narrative_file = output_dir / f"narrative-{period}-{date_label}.md"
+    write_output(narrative_md, narrative_file)
+    click.echo(
+        f"      {len(tl_period.events)} events across "
+        f"{len(ctx.source_summary)} sources -> {narrative_file}"
+    )
+
+    # ── Next steps ───────────────────────────────────────────────────────
+    click.echo("")
+    click.echo("Pipeline complete.  Next steps:")
+    click.echo(f"  1. Open {narrative_file} in Copilot Chat")
+    click.echo("  2. Use the generate-narrative skill to craft the narrative")
+    click.echo(f"  3. storyteller publish <output-narrative-file>")

@@ -12,6 +12,7 @@ dependencies = [
     "icalendar",
     "extract-msg",
     "python-dateutil",
+    "python-dotenv",
 ]
 
 [project.scripts]

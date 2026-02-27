@@ -41,3 +41,8 @@ GITHUB_REPO_PATH: str = os.getenv("STORYTELLER_GITHUB_REPO_PATH", "summaries/")
 GITHUB_GIST_PUBLIC: bool = (
     os.getenv("STORYTELLER_GITHUB_GIST_PUBLIC", "false").lower() == "true"
 )
+
+#: GitHub personal access token — used for gist uploads and repo cloning over HTTPS.
+#: Falls back to the conventional GITHUB_TOKEN variable if STORYTELLER_GITHUB_TOKEN
+#: is not set.  Required for gist mode; optional for repo mode when SSH is configured.
+GITHUB_TOKEN: str = os.getenv("STORYTELLER_GITHUB_TOKEN") or os.getenv("GITHUB_TOKEN") or ""

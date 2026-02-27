@@ -2,33 +2,37 @@
 
 Upload a narrative markdown summary to GitHub — either as a **secret Gist** or as a **committed file** in a repository.
 
+No extra tools required beyond plain `git` (already on every developer machine) and a GitHub personal access token.
+
 ## Prerequisites
 
-Install and authenticate the GitHub CLI:
+**Create a GitHub personal access token** at <https://github.com/settings/tokens>:
 
-```bash
-# Install (pick your platform)
-brew install gh          # macOS
-sudo apt install gh      # Debian/Ubuntu
+| Mode | Token type | Required scope |
+|------|-----------|----------------|
+| `gist` | Classic or fine-grained | Gists — read & write |
+| `repo` | Classic or fine-grained | Repository Contents — read & write |
 
-# Authenticate
-gh auth login
+Add the token to your `.env` file (copied from `.env.example`):
+
+```env
+GITHUB_TOKEN=ghp_...
 ```
+
+For **repo mode without a token**: if your machine already has git configured with SSH keys or a credential helper, the push will use those credentials automatically and no token is needed.
 
 ## Configuration
 
-Add these variables to your `.env` file (copy `.env.example` to get started):
-
 ```env
-# "gist" (default) or "repo"
-STORYTELLER_GITHUB_PUBLISH_MODE=gist
+# .env
 
-# Gist visibility — true = public, false = secret (default)
-STORYTELLER_GITHUB_GIST_PUBLIC=false
+GITHUB_TOKEN=ghp_...                              # required for gist; optional for repo
 
-# Required only for mode "repo"
-STORYTELLER_GITHUB_REPO=your-username/your-repo
-STORYTELLER_GITHUB_REPO_PATH=summaries/
+STORYTELLER_GITHUB_PUBLISH_MODE=gist             # "gist" (default) or "repo"
+STORYTELLER_GITHUB_GIST_PUBLIC=false             # true = public gist, false = secret
+
+STORYTELLER_GITHUB_REPO=your-username/your-repo  # repo mode only
+STORYTELLER_GITHUB_REPO_PATH=summaries/          # directory inside the repo
 ```
 
 ## Usage
@@ -36,32 +40,29 @@ STORYTELLER_GITHUB_REPO_PATH=summaries/
 ### Publish the most recent summary
 
 ```bash
-# Publish using settings from .env (defaults to gist mode)
+# Uses settings from .env (defaults to secret gist)
 uv run storyteller publish output/narrative-day-2025-01-15.md
 
-# Add a description
+# With a description
 uv run storyteller publish output/narrative-day-2025-01-15.md \
   --description "Daily standup context 2025-01-15"
 ```
 
-### Gist mode (explicit)
+### Gist mode
 
 ```bash
 # Secret gist (default)
-uv run storyteller publish output/narrative-week-2025-01-13.md \
-  --mode gist
+uv run storyteller publish output/narrative-week-2025-01-13.md --mode gist
 
 # Public gist
-uv run storyteller publish output/narrative-week-2025-01-13.md \
-  --mode gist --public
+uv run storyteller publish output/narrative-week-2025-01-13.md --mode gist --public
 ```
 
-### Repo mode (explicit)
+### Repo mode
 
 ```bash
-# Commit to the default repo/path from .env
-uv run storyteller publish output/narrative-day-2025-01-15.md \
-  --mode repo
+# Uses STORYTELLER_GITHUB_REPO and STORYTELLER_GITHUB_REPO_PATH from .env
+uv run storyteller publish output/narrative-day-2025-01-15.md --mode repo
 
 # Override repo and path inline
 uv run storyteller publish output/narrative-day-2025-01-15.md \
@@ -79,10 +80,9 @@ uv run storyteller ingest
 # 2. Prepare the narrative context
 uv run storyteller prepare --period day
 
-# 3. Ask Copilot to craft the narrative from the context file
-#    (use the generate-narrative skill)
+# 3. Ask Copilot to craft the narrative (generate-narrative skill)
 
-# 4. Publish the finished summary to GitHub
+# 4. Publish the finished summary
 uv run storyteller publish output/narrative-day-$(date +%Y-%m-%d).md \
   --description "Standup $(date +%Y-%m-%d)"
 ```
@@ -96,7 +96,8 @@ uv run storyteller publish output/narrative-day-$(date +%Y-%m-%d).md \
 
 ## Troubleshooting
 
-- **`gh` not found** — install the GitHub CLI and re-run.
-- **401 / 403 error** — run `gh auth login` and choose the correct account.
-- **Repo mode 422** — ensure `STORYTELLER_GITHUB_REPO` is correct and you have write access.
-- **File already exists (repo mode)** — the skill handles this automatically by fetching the existing blob SHA before updating.
+- **"GITHUB_TOKEN is required"** — add `GITHUB_TOKEN=ghp_...` to your `.env`.
+- **GitHub API error 401** — token is invalid or expired; generate a new one.
+- **GitHub API error 403** — token lacks the required scope (see Prerequisites table above).
+- **Repo mode push fails** — ensure the token has Contents write access, or configure SSH keys on the machine.
+- **"`git` not found"** — install git and make sure it is on your `PATH`.

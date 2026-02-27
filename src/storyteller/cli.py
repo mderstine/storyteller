@@ -234,8 +234,11 @@ def publish(
                 commit_message=description,
             )
             click.echo(f"Published to repo -> {url}")
+    except ValueError as exc:
+        raise click.ClickException(str(exc))
+    except RuntimeError as exc:
+        raise click.ClickException(str(exc))
     except FileNotFoundError:
         raise click.ClickException(
-            "`gh` CLI not found. Install it from https://cli.github.com/ "
-            "and run `gh auth login`."
+            "`git` not found. Ensure git is installed and on your PATH."
         )

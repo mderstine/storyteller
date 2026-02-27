@@ -10,9 +10,24 @@ Run the ingestion pipeline on raw data files:
 # Auto-detect and ingest all files in data/
 uv run storyteller ingest data/
 
+# Omit the path when STORYTELLER_DATA_DIR is set in .env
+uv run storyteller ingest
+
 # Ingest specific source type
 uv run storyteller ingest <path> --source-type <type>
 ```
+
+### Configuration via `.env`
+
+Set `STORYTELLER_DATA_DIR` to avoid passing a path every time:
+
+```env
+# .env
+STORYTELLER_DATA_DIR=/path/to/your/data
+STORYTELLER_OUTPUT_DIR=output/
+```
+
+Copy `.env.example` to `.env` to get started.
 
 ### Source Types
 

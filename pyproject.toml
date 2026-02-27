@@ -1,0 +1,29 @@
+[project]
+name = "storyteller"
+version = "0.1.0"
+description = "Craft coherent narratives from scattered work data"
+readme = "README.md"
+authors = [
+    { name = "MD", email = "derstine.michael@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "click",
+    "icalendar",
+    "extract-msg",
+    "python-dateutil",
+]
+
+[project.scripts]
+storyteller = "storyteller.cli:cli"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "ruff",
+    "ty",
+]
